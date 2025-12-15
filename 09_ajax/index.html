@@ -1,28 +1,37 @@
-<div id="demo">
+<div id="form">
 <h2>The XMLHttpRequest Object</h2>
-<button type="button" onclick="loadDoc()">Change Content</button>
+<form>
+	<label for="city">Enter a city name</label><br><br>
+	<input type="text" id="city" name="city" value="detroit">
+	<button type="button" onclick="loadDoc()">FBI Search</button>
+</form>
 </div>
+<div id="table"></div>
 <script>
 function loadDoc() {
-  const xhttp = new XMLHttpRequest();
-  xhttp.onload = function() {
-	const linhas = this.responseText.split("\n");
-	text = "";
-	for (let i = 0; i < linhas.length; i++) {
-		text += "<tr>"
-		const cels = linhas[i].split(",");
-		for (let j = 0; j < cels.length; j++) {
-	    	text +=  "<td>" + cels[j] + "</td>"
+	const xhttp = new XMLHttpRequest();
+	const city = document.getElementById("city").value;
+	xhttp.open("GET", "https://api.fbi.gov/wanted/v1/list?field_offices="+city);
+	xhttp.send();
+	console.log(xhttp.responseText)
+	let text="";
+	xhttp.onload = () => { 
+		const data = JSON.parse(xhttp.responseText); 
+		const items = data.items;
+		text="";
+		for (const item of items) {
+			text += "<tr>"
+			text +=  "<td>" + item.title + "</td>"
+			text +=  "<td>" + item.sex + "</td>"
+			text +=  "<td>" + item.hair + "</td>"
+			text +=  "<td>" + item.eyes + "</td>"
+			text += "</tr>"
 		}
-		text += "</tr>"
-		
+		console.log(text)
+		document.getElementById("table").innerHTML = "<table border=1><thead><tr><th>Name</th><th>Gender</th><th>Hair</th><th>Eyes</th></tr></thead><tbody>"+text+"</tbody></table>"
 	}
-	console.log(text)
-    document.getElementById("demo").innerHTML = "<table>"+text+"</table>"
-    
-  }
-  xhttp.open("GET", "https://raw.githubusercontent.com/lcbjrrr/quant/master/notas%20(2).csv");
-  xhttp.send();
+	
+        
 }
 </script>
 
