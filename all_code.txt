@@ -1,0 +1,839 @@
+--- App.vue ---
+
+<template>
+  <div id="app">
+    <nav class="main-nav">
+      <router-link to="/authors/list">Authors</router-link> |
+      <router-link to="/papers/list">Papers</router-link> |
+      <router-link to="/">Home</router-link>
+    </nav>
+    <hr />
+
+    <main class="container">
+      <router-view />
+    </main>
+  </div>
+</template>
+
+<script setup>
+</script>
+
+
+--- AuthorCreate.vue ---
+
+<template>
+  <div class="author-create">
+    <h1>➕ Create New Author</h1>
+
+    <div v-if="error" class="alert error">
+      <p>{{ error }}</p>
+    </div>
+
+    <form @submit.prevent="createAuthor">
+      <p>
+        <label for="name">Name:</label><br />
+        <input type="text" id="name" v-model="author.name" required />
+      </p>
+      <p>
+        <label for="affiliation">Affiliation:</label><br />
+        <input type="text" id="affiliation" v-model="author.affiliation" />
+      </p>
+      <p>
+        <label for="email">Email:</label><br />
+        <input type="email" id="email" v-model="author.email" required />
+      </p>
+      <p><button type="submit">Save New Author</button></p>
+    </form>
+
+    <p>
+      <router-link to="/authors/list">🔙 Back to Author List</router-link>
+    </p>
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+
+// --- State Definitions using ref ---
+const router = useRouter();
+//const API_BASE_URL = 'http://localhost:8080/authors';
+const API_BASE_URL = 'https://restpapers-870ea9b4e95c.herokuapp.com/authors';
+
+// A ref holding an object (Vue automatically wraps it as a Proxy/reactive)
+const author = ref({
+  name: '',
+  affiliation: '',
+  email: '',
+});
+const error = ref('');
+
+// --- Functions ---
+const createAuthor = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      // Accessing the object's value property for JSON serialization
+      body: JSON.stringify(author.value),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(errorBody || 'Failed to create author.');
+    }
+
+    // Redirect on success, using query parameters for the message
+    router.push({
+      path: '/authors/list',
+      query: {
+        message: `Author '${author.value.name}' created successfully!`,
+      },
+    });
+  } catch (e) {
+    error.value = 'Error creating author: ' + e.message;
+  }
+};
+</script>
+
+--- AuthorList.vue ---
+
+<template>
+  <div class="author-list">
+    <h1>📚 Author Management</h1>
+
+    <div v-if="message" class="alert success">
+      <p>{{ message }}</p>
+    </div>
+    <div v-if="error" class="alert error">
+      <p>{{ error }}</p>
+    </div>
+
+    <h2>Current Authors ({{ authors.length }})</h2>
+
+    <p>
+      <router-link to="/authors/create">➕ Add New Author</router-link>
+    </p>
+
+    <table border="1">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Affiliation</th>
+          <th>Email</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>    
+        <tr v-for="author in authors" :key="author.authorId">
+          <td>{{ author.authorId }}</td>
+          <td>
+            <router-link :to="{ name: 'AuthorUpdate', params: { authorId: author.authorId } }">
+              {{ author.name }}
+            </router-link>
+          </td>
+          <td>{{ author.affiliation }}</td>
+          <td>{{ author.email }}</td>
+          <td>
+            <button @click="deleteAuthor(author.authorId, author.name)">Delete</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
+
+// --- State Definitions using ref ---
+const authors = ref([]);
+const route = useRoute(); // Access the current route object
+
+// Read flash message/error from query parameters on load
+const message = ref(route.query.message || '');
+const error = ref(route.query.error || '');
+
+// Mock API path
+//const API_BASE_URL = 'http://localhost:8080/authors';
+const API_BASE_URL = 'https://restpapers-870ea9b4e95c.herokuapp.com/authors';
+
+// --- Functions ---
+const fetchAuthors = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}`);
+    console.log('OK');
+    if (!response.ok) {
+      console.log('ERROR.');
+      throw new Error('Failed to fetch authors.');
+    }
+    // Update the ref's value property
+    authors.value = await response.json();
+    console.log(authors.value);
+  } catch (e) {
+    error.value = 'Error loading authors: ' + e.message;
+  }
+};
+
+const deleteAuthor = async (authorId, authorName) => {
+  if (confirm(`Are you sure you want to delete author '${authorName}'?`)) {
+    try {
+      console.log(`${API_BASE_URL}/${authorId}`);
+      const response = await fetch(`${API_BASE_URL}/${authorId}`, {method: 'DELETE',});
+      console.log(response);
+      if (!response.ok) {
+        throw new Error(`Deletion failed with status ${response.status}`);
+      }
+
+      // Clear messages and refresh list
+      await fetchAuthors();
+      message.value = `Author '${authorName}' deleted successfully!`;
+      error.value = '';
+    } catch (e) {
+      error.value = 'Error deleting author: ' + e.message;
+      message.value = '';
+    }
+  }
+};
+
+// --- Lifecycle Hook ---
+// Equivalent to the 'created' hook in Options API
+
+
+onMounted(() => {
+  console.log('AuthorList component mounted.');
+  fetchAuthors();
+});
+</script>
+
+<style scoped>
+.alert {
+  padding: 10px;
+  border: 1px solid;
+  margin-bottom: 15px;
+}
+.success {
+  color: green;
+  border-color: green;
+}
+.error {
+  color: red;
+  border-color: red;
+}
+</style>
+
+--- AuthorUpdate.vue ---
+
+<template>
+  <div class="author-update">
+    <h1>🖋️ Update Author Details</h1>
+
+    <div v-if="error" class="alert error">
+      <p>{{ error }}</p>
+    </div>
+
+    <form v-if="author.authorId" @submit.prevent="updateAuthor">
+      <input type="hidden" v-model="author.authorId" />
+
+      <p>
+        <label for="name">Name:</label><br />
+        <input type="text" id="name" v-model="author.name" required />
+      </p>
+      
+      <p>
+        <label for="affiliation">Affiliation:</label><br />
+        <input type="text" id="affiliation" v-model="author.affiliation" />
+      </p>
+      
+      <p>
+        <label for="email">Email:</label><br />
+        <input type="email" id="email" v-model="author.email" required />
+      </p>
+      
+      <p>
+        <button type="submit">Update Author</button>
+      </p>
+    </form>
+    
+    <div v-else-if="!error">
+      <p>Loading author details...</p>
+    </div>
+
+    <!-- Add/Remove Papers Section -->
+    <div v-if="author.authorId" class="papers-section">
+      <hr />
+      <h2>Papers of this Author</h2>
+      
+      <ul>
+        <li v-for="paper in author.papers" :key="paper.paperId">
+          {{ paper.title }} ({{ paper.year }})
+          <button @click.prevent="removePaper(paper.paperId)">Remove</button>
+        </li>
+      </ul>
+      <p v-if="!author.papers || author.papers.length === 0">No papers assigned.</p>
+
+      <h3>Add a Paper</h3>
+      <select v-model="selectedPaperId">
+        <option disabled value="">Please select one</option>
+        <option v-for="p in allPapers" :key="p.paperId" :value="p.paperId">
+          {{ p.title }}
+        </option>
+      </select>
+      <button @click.prevent="addPaper" :disabled="!selectedPaperId">Add Paper</button>
+    </div>
+
+    <p>
+      <router-link to="/authors/list">🔙 Back to Author List</router-link>
+    </p>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+
+const route = useRoute();
+const router = useRouter();
+//const API_BASE_URL = 'http://localhost:8080/authors';
+const API_BASE_URL = 'https://restpapers-870ea9b4e95c.herokuapp.com/authors';
+
+const author = ref({
+  authorId: null,
+  name: '',
+  affiliation: '',
+  email: '',
+  papers: [],
+});
+const error = ref('');
+const allPapers = ref([]);
+const selectedPaperId = ref('');
+const PAPERS_API_URL = 'https://restpapers-870ea9b4e95c.herokuapp.com/papers';
+
+// --- 1. Fetch data to pre-load the form ---
+const fetchAuthorDetails = async () => {
+  const idFromUrl = route.params.authorId; 
+  try {
+    const response = await fetch(`${API_BASE_URL}/${idFromUrl}`);
+    if (!response.ok) throw new Error('Could not find that author.');
+    
+    const data = await response.json();
+    author.value = data; 
+  } catch (e) {
+    error.value = "Error pre-loading: " + e.message;
+  }
+};
+
+// --- 2. Submit the updated data ---
+const updateAuthor = async () => {
+  try {
+    // FIX: Using author.value.authorId instead of idFromUrl
+    const response = await fetch(`${API_BASE_URL}/${author.value.authorId}`, {
+      method: 'PUT', 
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(author.value), 
+    });
+
+    if (!response.ok) throw new Error('Failed to update author.');
+
+    router.push({ 
+      path: '/authors/list', 
+      query: { message: 'Author updated successfully!' } 
+    });
+  } catch (e) {
+    error.value = "Error saving: " + e.message;
+  }
+};
+
+onMounted(() => {
+  fetchAuthorDetails();
+  fetchAllPapers();
+});
+
+const fetchAllPapers = async () => {
+  try {
+    const response = await fetch(PAPERS_API_URL);
+    if (!response.ok) throw new Error('Could not fetch papers.');
+    allPapers.value = await response.json();
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+const removePaper = async (paperId) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/${author.value.authorId}/papers/${paperId}`, {
+      method: 'DELETE'
+    });
+    if (!response.ok) throw new Error('Failed to remove paper.');
+    await fetchAuthorDetails();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+const addPaper = async () => {
+  if (!selectedPaperId.value) return;
+  try {
+    const response = await fetch(`${API_BASE_URL}/${author.value.authorId}/papers/${selectedPaperId.value}`, {
+      method: 'POST'
+    });
+    if (!response.ok) throw new Error('Failed to add paper.');
+    selectedPaperId.value = '';
+    await fetchAuthorDetails();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+</script>
+
+<style scoped>
+.alert { padding: 10px; border: 1px solid; margin-bottom: 15px; }
+.error { color: red; border-color: red; }
+.papers-section {
+  margin-top: 2rem;
+  padding: 1rem;
+  background-color: #f9f9f9;
+  border-radius: 8px;
+}
+</style>
+
+--- PaperCreate.vue ---
+
+<template>
+  <div class="paper-create">
+    <h1>➕ Create New Paper</h1>
+
+    <div v-if="error" class="alert error">
+      <p>{{ error }}</p>
+    </div>
+
+    <form @submit.prevent="createPaper">
+      <p>
+        <label for="title">Title:</label><br />
+        <input type="text" id="title" v-model="paper.title" required />
+      </p>
+      <p>
+        <label for="year">Year:</label><br />
+        <input type="number" id="year" v-model="paper.year" />
+      </p>
+      <p><button type="submit">Save New Paper</button></p>
+    </form>
+
+    <p>
+      <router-link to="/papers/list">🔙 Back to Paper List</router-link>
+    </p>
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+
+// --- State Definitions using ref ---
+const router = useRouter();
+const API_BASE_URL = 'https://restpapers-870ea9b4e95c.herokuapp.com/papers';
+
+// A ref holding an object (Vue automatically wraps it as a Proxy/reactive)
+const paper = ref({
+  title: '',
+  year: new Date().getFullYear(),
+});
+const error = ref('');
+
+// --- Functions ---
+const createPaper = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      // Accessing the object's value property for JSON serialization
+      body: JSON.stringify(paper.value),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(errorBody || 'Failed to create paper.');
+    }
+
+    // Redirect on success, using query parameters for the message
+    router.push({
+      path: '/papers/list',
+      query: {
+        message: `Paper '${paper.value.title}' created successfully!`,
+      },
+    });
+  } catch (e) {
+    error.value = 'Error creating paper: ' + e.message;
+  }
+};
+</script>
+
+<style scoped>
+.alert { padding: 10px; border: 1px solid; margin-bottom: 15px; }
+.error { color: red; border-color: red; }
+</style>
+
+
+--- PaperList.vue ---
+
+<template>
+  <div class="paper-list">
+    <h1>📄 Paper Management</h1>
+
+    <div v-if="message" class="alert success">
+      <p>{{ message }}</p>
+    </div>
+    <div v-if="error" class="alert error">
+      <p>{{ error }}</p>
+    </div>
+
+    <h2>Current Papers ({{ papers.length }})</h2>
+
+    <p>
+      <router-link to="/papers/create">➕ Add New Paper</router-link>
+    </p>
+
+    <table border="1">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Title</th>
+          <th>Year</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>    
+        <tr v-for="paper in papers" :key="paper.paperId">
+          <td>{{ paper.paperId }}</td>
+          <td>
+            <router-link :to="{ name: 'PaperUpdate', params: { paperId: paper.paperId } }">
+              {{ paper.title }}
+            </router-link>
+          </td>
+          <td>{{ paper.year }}</td>
+          <td>
+            <button @click="deletePaper(paper.paperId, paper.title)">Delete</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
+
+// --- State Definitions using ref ---
+const papers = ref([]);
+const route = useRoute(); // Access the current route object
+
+// Read flash message/error from query parameters on load
+const message = ref(route.query.message || '');
+const error = ref(route.query.error || '');
+
+const API_BASE_URL = 'https://restpapers-870ea9b4e95c.herokuapp.com/papers';
+
+// --- Functions ---
+const fetchPapers = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}`);
+    console.log('OK');
+    if (!response.ok) {
+      console.log('ERROR.');
+      throw new Error('Failed to fetch papers.');
+    }
+    papers.value = await response.json();
+    console.log(papers.value);
+  } catch (e) {
+    error.value = 'Error loading papers: ' + e.message;
+  }
+};
+
+const deletePaper = async (paperId, title) => {
+  if (confirm(`Are you sure you want to delete paper '${title}'?`)) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/${paperId}`, {method: 'DELETE',});
+      if (!response.ok) {
+        throw new Error(`Deletion failed with status ${response.status}`);
+      }
+
+      // Clear messages and refresh list
+      await fetchPapers();
+      message.value = `Paper '${title}' deleted successfully!`;
+      error.value = '';
+    } catch (e) {
+      error.value = 'Error deleting paper: ' + e.message;
+      message.value = '';
+    }
+  }
+};
+
+onMounted(() => {
+  console.log('PaperList component mounted.');
+  fetchPapers();
+});
+</script>
+
+<style scoped>
+.alert {
+  padding: 10px;
+  border: 1px solid;
+  margin-bottom: 15px;
+}
+.success {
+  color: green;
+  border-color: green;
+}
+.error {
+  color: red;
+  border-color: red;
+}
+</style>
+
+
+--- PaperUpdate.vue ---
+
+<template>
+  <div class="paper-update">
+    <h1>📄 Update Paper Details</h1>
+
+    <div v-if="error" class="alert error">
+      <p>{{ error }}</p>
+    </div>
+
+    <!-- Main Update Form -->
+    <form v-if="paper.paperId" @submit.prevent="updatePaper">
+      <input type="hidden" v-model="paper.paperId" />
+
+      <p>
+        <label for="title">Title:</label><br />
+        <input type="text" id="title" v-model="paper.title" required />
+      </p>
+      
+      <p>
+        <label for="year">Year:</label><br />
+        <input type="number" id="year" v-model="paper.year" />
+      </p>
+      
+      <p>
+        <button type="submit">Update Paper</button>
+      </p>
+    </form>
+    
+    <div v-else-if="!error">
+      <p>Loading paper details...</p>
+    </div>
+
+    <!-- Add/Remove Authors Section -->
+    <div v-if="paper.paperId" class="authors-section">
+      <hr />
+      <h2>Authors of this Paper</h2>
+      
+      <ul>
+        <li v-for="author in paper.authors" :key="author.authorId">
+          {{ author.name }} ({{ author.affiliation }})
+          <button @click.prevent="removeAuthor(author.authorId)">Remove</button>
+        </li>
+        <li v-if="!paper.authors || paper.authors.length === 0">No authors assigned.</li>
+      </ul>
+
+      <h3>Add an Author</h3>
+      <select v-model="selectedAuthorId">
+        <option disabled value="">Please select one</option>
+        <option v-for="a in allAuthors" :key="a.authorId" :value="a.authorId">
+          {{ a.name }}
+        </option>
+      </select>
+      <button @click.prevent="addAuthor" :disabled="!selectedAuthorId">Add Author</button>
+    </div>
+
+    <p>
+      <router-link to="/papers/list">🔙 Back to Paper List</router-link>
+    </p>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+
+const route = useRoute();
+const router = useRouter();
+const API_BASE_URL = 'https://restpapers-870ea9b4e95c.herokuapp.com/papers';
+const AUTHORS_API_URL = 'https://restpapers-870ea9b4e95c.herokuapp.com/authors';
+
+const paper = ref({
+  paperId: null,
+  title: '',
+  year: '',
+  authors: [],
+});
+const error = ref('');
+const allAuthors = ref([]);
+const selectedAuthorId = ref('');
+
+// --- 1. Fetch data to pre-load the form ---
+const fetchPaperDetails = async () => {
+  const idFromUrl = route.params.paperId; 
+  try {
+    const response = await fetch(`${API_BASE_URL}/${idFromUrl}`);
+    if (!response.ok) throw new Error('Could not find that paper.');
+    
+    const data = await response.json();
+    paper.value = data; 
+  } catch (e) {
+    error.value = "Error pre-loading paper: " + e.message;
+  }
+};
+
+const fetchAllAuthors = async () => {
+  try {
+    const response = await fetch(AUTHORS_API_URL);
+    if (!response.ok) throw new Error('Could not fetch authors.');
+    allAuthors.value = await response.json();
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+// --- 2. Submit the updated data ---
+const updatePaper = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/${paper.value.paperId}`, {
+      method: 'PUT', 
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(paper.value), 
+    });
+
+    if (!response.ok) throw new Error('Failed to update paper.');
+
+    router.push({ 
+      path: '/papers/list', 
+      query: { message: 'Paper updated successfully!' } 
+    });
+  } catch (e) {
+    error.value = "Error saving: " + e.message;
+  }
+};
+
+// --- 3. Manage associations ---
+const removeAuthor = async (authorId) => {
+  try {
+    // Assuming backend endpoint for removing association
+    const response = await fetch(`${API_BASE_URL}/${paper.value.paperId}/authors/${authorId}`, {
+      method: 'DELETE'
+    });
+    if (!response.ok) throw new Error('Failed to remove author from paper.');
+    await fetchPaperDetails(); // refresh details
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+const addAuthor = async () => {
+  if (!selectedAuthorId.value) return;
+  try {
+    // Assuming backend endpoint for adding association
+    const response = await fetch(`${API_BASE_URL}/${paper.value.paperId}/authors/${selectedAuthorId.value}`, {
+      method: 'POST'
+    });
+    if (!response.ok) throw new Error('Failed to add author to paper.');
+    selectedAuthorId.value = ''; // reset selection
+    await fetchPaperDetails(); // refresh details
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+onMounted(() => {
+  fetchPaperDetails();
+  fetchAllAuthors();
+});
+</script>
+
+<style scoped>
+.alert { padding: 10px; border: 1px solid; margin-bottom: 15px; }
+.error { color: red; border-color: red; }
+.authors-section {
+  margin-top: 2rem;
+  padding: 1rem;
+  background-color: #f9f9f9;
+  border-radius: 8px;
+}
+</style>
+
+
+--- index.js ---
+
+import { createRouter, createWebHistory } from 'vue-router';
+import AuthorList from './AuthorList.vue';
+import AuthorCreate from './AuthorCreate.vue';
+import AuthorUpdate from './AuthorUpdate.vue';
+import PaperList from './PaperList.vue';
+import PaperCreate from './PaperCreate.vue';
+import PaperUpdate from './PaperUpdate.vue';
+
+const routes = [
+  {
+    path: '/',
+    redirect: '/authors/list'
+  },
+  {
+    path: '/authors/list',
+    name: 'AuthorList',
+    component: AuthorList
+  },
+  {
+    path: '/authors/create',
+    name: 'AuthorCreate',
+    component: AuthorCreate
+  },
+  {
+    // :authorId is a dynamic segment, equivalent to @PathVariable
+    path: '/authors/update/:authorId',
+    name: 'AuthorUpdate',
+    component: AuthorUpdate
+  },
+  {
+    path: '/papers/list',
+    name: 'PaperList',
+    component: PaperList
+  },
+  {
+    path: '/papers/create',
+    name: 'PaperCreate',
+    component: PaperCreate
+  },
+  {
+    path: '/papers/update/:paperId',
+    name: 'PaperUpdate',
+    component: PaperUpdate
+  }
+];
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes
+});
+
+export default router;
+
+--- main.js ---
+
+import { createApp } from 'vue';
+import App from './App.vue';
+import router from './index.js';  
+
+const app = createApp(App);
+
+// Use the router plugin
+app.use(router);
+
+app.mount('#app');
