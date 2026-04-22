@@ -48,6 +48,57 @@ db.serialize(() => {
       FOREIGN KEY (paperId) REFERENCES papers(paperId)
     )
   `);
+
+  // Seed authors
+  const authors = [
+    ['Alice Johnson', 'alice@acme.com'],
+    ['Bob Smith',     'bob@acme.com'],
+    ['Carol White',   'carol@acme.com'],
+    ['David Brown',   'david@acme.com'],
+    ['Eva Martinez',  'eva@acme.com'],
+    ['Frank Lee',     'frank@acme.com'],
+  ];
+  const insertAuthor = db.prepare(
+    'INSERT OR IGNORE INTO authors (name, email) VALUES (?, ?)'
+  );
+  for (const [name, email] of authors) {
+    insertAuthor.run(name, email);
+  }
+  insertAuthor.finalize();
+
+  // Seed papers
+  const papers = [
+    ['arxiv-001', 'Deep Learning Fundamentals',        'An overview of deep learning techniques.'],
+    ['arxiv-002', 'Quantum Computing Advances',        'Recent progress in quantum hardware and algorithms.'],
+    ['arxiv-003', 'Climate Modeling with Neural Nets', 'Applying ML to climate prediction models.'],
+  ];
+  const insertPaper = db.prepare(
+    'INSERT OR IGNORE INTO papers (entryId, title, abstract) VALUES (?, ?, ?)'
+  );
+  for (const [entryId, title, abstract] of papers) {
+    insertPaper.run(entryId, title, abstract);
+  }
+  insertPaper.finalize();
+
+  // Seed author_papers: 2 authors per paper
+  // Paper 1 (arxiv-001) -> Alice (1), Bob (2)
+  // Paper 2 (arxiv-002) -> Carol (3), David (4)
+  // Paper 3 (arxiv-003) -> Eva (5), Frank (6)
+  const links = [
+    [1, 1],
+    [2, 1],
+    [3, 2],
+    [4, 2],
+    [5, 3],
+    [6, 3],
+  ];
+  const insertLink = db.prepare(
+    'INSERT OR IGNORE INTO author_papers (authorId, paperId) VALUES (?, ?)'
+  );
+  for (const [authorId, paperId] of links) {
+    insertLink.run(authorId, paperId);
+  }
+  insertLink.finalize();
 });
 
 // ==========================================
