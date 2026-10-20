@@ -68,7 +68,20 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { request } from './api.js';
+
+const API_BASE_URL = 'https://rest-papers.onrender.com';
+
+const parseResponse = async (response) => {
+ const text = await response.text();
+ let data = text;
+ try {
+   data = text ? JSON.parse(text) : null;
+ } catch {}
+ if (!response.ok) {
+   throw new Error((data && (data.message || data.error)) || text || response.statusText);
+ }
+ return data;
+};
 
 const route = useRoute();
 const router = useRouter();
@@ -94,7 +107,8 @@ const availableAuthors = computed(() =>
 const fetchPaperDetails = async () => {
  const idFromUrl = route.params.paperId;
  try {
-   const data = await request(`/papers/${idFromUrl}`);
+   const response = await fetch(`${API_BASE_URL}/papers/${idFromUrl}`);
+   const data = await parseResponse(response);
    if (!data) throw new Error('Could not find that paper.');
 
    // Keep only the editable fields (the API also returns the paper's authors)
@@ -107,13 +121,15 @@ const fetchPaperDetails = async () => {
 
 // Reload only the linked authors (keeps unsaved edits in the form)
 const refreshPaperAuthors = async () => {
- const data = await request(`/papers/${route.params.paperId}`);
+ const response = await fetch(`${API_BASE_URL}/papers/${route.params.paperId}`);
+ const data = await parseResponse(response);
  paperAuthors.value = data.authors || [];
 };
 
 const fetchAllAuthors = async () => {
  try {
-   allAuthors.value = await request('/authors');
+   const response = await fetch(`${API_BASE_URL}/authors`);
+   allAuthors.value = await parseResponse(response);
  } catch (e) {
    error.value = "Error loading authors: " + e.message;
  }
@@ -123,7 +139,8 @@ const fetchAllAuthors = async () => {
 const addAuthor = async () => {
  const author = allAuthors.value.find((a) => a.authorId === selectedAuthorId.value);
  try {
-   await request(`/papers/${paper.value.paperId}/authors/${selectedAuthorId.value}`, { method: 'PUT' });
+   const response = await fetch(`${API_BASE_URL}/papers/${paper.value.paperId}/authors/${selectedAuthorId.value}`, { method: 'PUT' });
+   await parseResponse(response);
    await refreshPaperAuthors();
    selectedAuthorId.value = '';
    message.value = `Author '${author?.name}' added to this paper.`;
@@ -137,7 +154,8 @@ const addAuthor = async () => {
 const removeAuthor = async (author) => {
  if (!confirm(`Remove author '${author.name}' from this paper?`)) return;
  try {
-   await request(`/papers/${paper.value.paperId}/authors/${author.authorId}`, { method: 'DELETE' });
+   const response = await fetch(`${API_BASE_URL}/papers/${paper.value.paperId}/authors/${author.authorId}`, { method: 'DELETE' });
+   await parseResponse(response);
    await refreshPaperAuthors();
    message.value = `Author '${author.name}' removed from this paper.`;
    error.value = '';
@@ -150,7 +168,12 @@ const removeAuthor = async (author) => {
 // --- 2. Submit the updated data ---
 const updatePaper = async () => {
  try {
-   await request(`/papers/${paper.value.paperId}`, { method: 'PUT', body: paper.value });
+   const response = await fetch(`${API_BASE_URL}/papers/${paper.value.paperId}`, {
+     method: 'PUT',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify(paper.value),
+   });
+   await parseResponse(response);
 
    router.push({
      path: '/papers/list',

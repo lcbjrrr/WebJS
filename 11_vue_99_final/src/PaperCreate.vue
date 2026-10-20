@@ -31,7 +31,20 @@
 <script setup>
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { request } from './api.js';
+
+const API_BASE_URL = 'https://rest-papers.onrender.com';
+
+const parseResponse = async (response) => {
+  const text = await response.text();
+  let data = text;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {}
+  if (!response.ok) {
+    throw new Error((data && (data.message || data.error)) || text || response.statusText);
+  }
+  return data;
+};
 
 // --- State Definitions using ref ---
 const router = useRouter();
@@ -46,7 +59,12 @@ const error = ref('');
 // --- Functions ---
 const createPaper = async () => {
  try {
-   await request('/papers', { method: 'POST', body: paper.value });
+   const response = await fetch(`${API_BASE_URL}/papers`, {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify(paper.value),
+   });
+   await parseResponse(response);
 
    // Redirect on success, using query parameters for the message
    router.push({

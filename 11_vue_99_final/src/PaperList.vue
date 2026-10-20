@@ -49,7 +49,20 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
-import { request } from './api.js';
+
+const API_BASE_URL = 'https://rest-papers.onrender.com';
+
+const parseResponse = async (response) => {
+  const text = await response.text();
+  let data = text;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {}
+  if (!response.ok) {
+    throw new Error((data && (data.message || data.error)) || text || response.statusText);
+  }
+  return data;
+};
 
 // --- State Definitions using ref ---
 const route = useRoute(); // Access the current route object
@@ -64,7 +77,8 @@ const loading = ref(false);
 const loadPapers = async () => {
 loading.value = true;
 try {
-  papers.value = await request('/papers');
+  const response = await fetch(`${API_BASE_URL}/papers`);
+  papers.value = await parseResponse(response);
 } catch (e) {
   error.value = 'Error loading papers: ' + e.message;
 } finally {
@@ -76,7 +90,8 @@ try {
 const deletePaper = async (paperId, paperTitle) => {
 if (confirm(`Are you sure you want to delete paper '${paperTitle}'?`)) {
   try {
-    await request(`/papers/${paperId}`, { method: 'DELETE' });
+    const response = await fetch(`${API_BASE_URL}/papers/${paperId}`, { method: 'DELETE' });
+    await parseResponse(response);
     await loadPapers();
     message.value = `Paper '${paperTitle}' deleted successfully!`;
     error.value = '';
