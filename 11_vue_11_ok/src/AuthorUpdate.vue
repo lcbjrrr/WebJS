@@ -37,7 +37,17 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { request } from './api.js';
+
+const API_BASE_URL = 'https://rest-papers.onrender.com';
+const getErrorMessage = async (response) => {
+  const text = await response.text();
+  try {
+    const data = text ? JSON.parse(text) : null;
+    return (data && (data.message || data.error)) || text || response.statusText;
+  } catch {
+    return text || response.statusText;
+  }
+};
 
 const route = useRoute();
 const router = useRouter();
@@ -53,7 +63,9 @@ const error = ref('');
 const fetchAuthorDetails = async () => {
  const idFromUrl = route.params.authorId;
  try {
-   const data = await request(`/authors/${idFromUrl}`);
+   const response = await fetch(`${API_BASE_URL}/authors/${idFromUrl}`);
+  if (!response.ok) throw new Error(await getErrorMessage(response));
+   const data = await response.json();
    if (!data) throw new Error('Could not find that author.');
 
    // Keep only the editable fields (the API also returns the author's papers)
@@ -66,7 +78,12 @@ const fetchAuthorDetails = async () => {
 // --- 2. Submit the updated data ---
 const updateAuthor = async () => {
  try {
-   await request(`/authors/${author.value.authorId}`, { method: 'PUT', body: author.value });
+   const response = await fetch(`${API_BASE_URL}/authors/${author.value.authorId}`, {
+     method: 'PUT',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify(author.value),
+   });
+  if (!response.ok) throw new Error(await getErrorMessage(response));
 
    router.push({
      path: '/authors/list',

@@ -47,7 +47,17 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
-import { request } from './api.js';
+
+const API_BASE_URL = 'https://rest-papers.onrender.com';
+const getErrorMessage = async (response) => {
+  const text = await response.text();
+  try {
+    const data = text ? JSON.parse(text) : null;
+    return (data && (data.message || data.error)) || text || response.statusText;
+  } catch {
+    return text || response.statusText;
+  }
+};
 
 // --- State Definitions using ref ---
 const route = useRoute(); // Access the current route object
@@ -62,7 +72,9 @@ const loading = ref(false);
 const loadAuthors = async () => {
 loading.value = true;
 try {
-  authors.value = await request('/authors');
+  const response = await fetch(`${API_BASE_URL}/authors`);
+  if (!response.ok) throw new Error(await getErrorMessage(response));
+  authors.value = await response.json();
 } catch (e) {
   error.value = 'Error loading authors: ' + e.message;
 } finally {
@@ -74,7 +86,8 @@ try {
 const deleteAuthor = async (authorId, authorName) => {
 if (confirm(`Are you sure you want to delete author '${authorName}'?`)) {
   try {
-    await request(`/authors/${authorId}`, { method: 'DELETE' });
+    const response = await fetch(`${API_BASE_URL}/authors/${authorId}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error(await getErrorMessage(response));
     await loadAuthors();
     message.value = `Author '${authorName}' deleted successfully!`;
     error.value = '';

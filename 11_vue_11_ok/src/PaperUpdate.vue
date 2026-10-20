@@ -42,7 +42,17 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { request } from './api.js';
+
+const API_BASE_URL = 'https://rest-papers.onrender.com';
+const getErrorMessage = async (response) => {
+  const text = await response.text();
+  try {
+    const data = text ? JSON.parse(text) : null;
+    return (data && (data.message || data.error)) || text || response.statusText;
+  } catch {
+    return text || response.statusText;
+  }
+};
 
 const route = useRoute();
 const router = useRouter();
@@ -59,7 +69,9 @@ const error = ref('');
 const fetchPaperDetails = async () => {
  const idFromUrl = route.params.paperId;
  try {
-   const data = await request(`/papers/${idFromUrl}`);
+   const response = await fetch(`${API_BASE_URL}/papers/${idFromUrl}`);
+  if (!response.ok) throw new Error(await getErrorMessage(response));
+   const data = await response.json();
    if (!data) throw new Error('Could not find that paper.');
 
    // Keep only the editable fields (the API also returns the paper's authors)
@@ -72,7 +84,12 @@ const fetchPaperDetails = async () => {
 // --- 2. Submit the updated data ---
 const updatePaper = async () => {
  try {
-   await request(`/papers/${paper.value.paperId}`, { method: 'PUT', body: paper.value });
+   const response = await fetch(`${API_BASE_URL}/papers/${paper.value.paperId}`, {
+     method: 'PUT',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify(paper.value),
+   });
+  if (!response.ok) throw new Error(await getErrorMessage(response));
 
    router.push({
      path: '/papers/list',
