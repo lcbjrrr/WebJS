@@ -1,0 +1,96 @@
+<template>
+ <div class="paper-create">
+   <h1>➕ Create New Paper</h1>
+
+   <div v-if="error" class="alert error">
+     <p>{{ error }}</p>
+   </div>
+
+   <form @submit.prevent="createPaper">
+     <p>
+       <label for="entryId">Entry ID:</label><br />
+       <select id="entryId" v-model="paper.entryId" required>
+         <option value="" disabled>-- Select a category --</option>
+         <option v-for="id in entryIds" :key="id" :value="id">{{ id }}</option>
+       </select>
+     </p>
+     <p>
+       <label for="title">Title:</label><br />
+       <input type="text" id="title" v-model="paper.title" required />
+     </p>
+     <p>
+       <label for="abstract">Abstract:</label><br />
+       <textarea id="abstract" v-model="paper.abstract" rows="5" cols="50"></textarea>
+     </p>
+     <p><button type="submit">Save New Paper</button></p>
+   </form>
+
+   <p>
+     <router-link to="/papers/list">🔙 Back to Paper List</router-link>
+   </p>
+ </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://rest-final-papers.onrender.com';
+
+const parseResponse = async (response) => {
+  const text = await response.text();
+  let data = text;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {}
+  if (!response.ok) {
+    throw new Error((data && (data.message || data.error)) || text || response.statusText);
+  }
+  return data;
+};
+
+// --- State Definitions using ref ---
+const router = useRouter();
+
+const paper = ref({
+ entryId: '',
+ title: '',
+ abstract: '',
+});
+const error = ref('');
+const entryIds = ref([]);
+
+// Load the valid entryId values (categorical domain) from the backend
+const loadEntryIds = async () => {
+ try {
+   const response = await fetch(`${API_BASE_URL}/papers/entry-ids`);
+   entryIds.value = await parseResponse(response);
+ } catch (e) {
+   error.value = 'Error loading entry IDs: ' + e.message;
+ }
+};
+
+onMounted(loadEntryIds);
+
+// --- Functions ---
+const createPaper = async () => {
+ try {
+   const response = await fetch(`${API_BASE_URL}/papers`, {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify(paper.value),
+   });
+   await parseResponse(response);
+
+   // Redirect on success, using query parameters for the message
+   router.push({
+     path: '/papers/list',
+     query: {
+       message: `Paper '${paper.value.title}' created successfully!`,
+     },
+   });
+ } catch (e) {
+   error.value = 'Error creating paper: ' + e.message;
+ }
+};
+</script>
