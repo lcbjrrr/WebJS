@@ -1,755 +1,205 @@
-//npm install express sqlite3 swagger-ui-express swagger-jsdoc express-validator cors
+// REST API for Papers & Authors (many-to-many) with categorical domain validation.
+// Run with: npm run api   (listens on http://localhost:3000 by default)
+// Data is persisted to src/api/data.json.
 
-const express = require('express');
-const bodyParser = require('body-parser');
-const sqlite3 = require('sqlite3').verbose();
-const swaggerUi = require('swagger-ui-express');
-const swaggerJSDoc = require('swagger-jsdoc');
-const cors = require('cors');
+import express from 'express';
+import cors from 'cors';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const app = express();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data.json');
+const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-app.use(bodyParser.json());
+// ---------------------------------------------------------------------------
+// Domains (valid values for categorical fields)
+// ---------------------------------------------------------------------------
+const PAPER_ENTRY_IDS = ['CSC', 'Econ', 'Bus', 'Bio', 'Law', 'Eng'];
+const AUTHOR_RANKS = [
+  'Professor',
+  'Associate Professor',
+  'Assistant Professor',
+  'Lecturer',
+  'Researcher',
+  'PhD Student',
+];
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// ==========================================
-//   SQLITE CONNECTION (acme.db)
-// ==========================================
-const db = new sqlite3.Database('./acme.db', (err) => {
-  if (err) {
-    console.error('Could not connect to SQLite', err);
-  } else {
-    console.log('Connected to SQLite acme.db');
-  }
+// ---------------------------------------------------------------------------
+// Persistence (simple JSON file)
+// ---------------------------------------------------------------------------
+const seed = () => ({
+  nextAuthorId: 3,
+  nextPaperId: 4,
+  authors: [
+    { authorId: 1, name: 'Ada Lovelace', email: 'ada@example.com', rank: 'Professor' },
+    { authorId: 2, name: 'Alan Turing', email: 'alan@example.com', rank: 'Researcher' },
+  ],
+  papers: [
+    { paperId: 1, entryId: 'CSC', title: 'Deep Learning Fundamentals', abstract: 'An overview of deep learning techniques.' },
+    { paperId: 2, entryId: 'Eng', title: 'Quantum Computing Advances', abstract: 'Recent progress in quantum hardware and algorithms.' },
+    { paperId: 3, entryId: 'Bio', title: 'Climate Modeling with Neural Nets', abstract: 'Applying ML to climate prediction models.' },
+  ],
+  links: [
+    { authorId: 1, paperId: 1 },
+    { authorId: 2, paperId: 1 },
+    { authorId: 2, paperId: 2 },
+  ],
 });
 
-db.serialize(() => {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS authors (
-      authorId INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL
-    )
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS papers (
-      paperId INTEGER PRIMARY KEY AUTOINCREMENT,
-      entryId TEXT UNIQUE NOT NULL,
-      title TEXT NOT NULL,
-      abstract TEXT
-    )
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS author_papers (
-      authorId INTEGER NOT NULL,
-      paperId INTEGER NOT NULL,
-      PRIMARY KEY (authorId, paperId),
-      FOREIGN KEY (authorId) REFERENCES authors(authorId),
-      FOREIGN KEY (paperId) REFERENCES papers(paperId)
-    )
-  `);
-
-  // Seed authors
-  const authors = [
-    ['Alice Johnson', 'alice@acme.com'],
-    ['Bob Smith',     'bob@acme.com'],
-    ['Carol White',   'carol@acme.com'],
-    ['David Brown',   'david@acme.com'],
-    ['Eva Martinez',  'eva@acme.com'],
-    ['Frank Lee',     'frank@acme.com'],
-  ];
-  const insertAuthor = db.prepare(
-    'INSERT OR IGNORE INTO authors (name, email) VALUES (?, ?)'
-  );
-  for (const [name, email] of authors) {
-    insertAuthor.run(name, email);
+const load = () => {
+  try {
+    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  } catch {
+    const data = seed();
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+    return data;
   }
-  insertAuthor.finalize();
-
-  // Seed papers
-  const papers = [
-    ['arxiv-001', 'Deep Learning Fundamentals',        'An overview of deep learning techniques.'],
-    ['arxiv-002', 'Quantum Computing Advances',        'Recent progress in quantum hardware and algorithms.'],
-    ['arxiv-003', 'Climate Modeling with Neural Nets', 'Applying ML to climate prediction models.'],
-  ];
-  const insertPaper = db.prepare(
-    'INSERT OR IGNORE INTO papers (entryId, title, abstract) VALUES (?, ?, ?)'
-  );
-  for (const [entryId, title, abstract] of papers) {
-    insertPaper.run(entryId, title, abstract);
-  }
-  insertPaper.finalize();
-
-  // Seed author_papers: 2 authors per paper
-  // Paper 1 (arxiv-001) -> Alice (1), Bob (2)
-  // Paper 2 (arxiv-002) -> Carol (3), David (4)
-  // Paper 3 (arxiv-003) -> Eva (5), Frank (6)
-  const links = [
-    [1, 1],
-    [2, 1],
-    [3, 2],
-    [4, 2],
-    [5, 3],
-    [6, 3],
-  ];
-  const insertLink = db.prepare(
-    'INSERT OR IGNORE INTO author_papers (authorId, paperId) VALUES (?, ?)'
-  );
-  for (const [authorId, paperId] of links) {
-    insertLink.run(authorId, paperId);
-  }
-  insertLink.finalize();
-});
-
-// ==========================================
-//           SWAGGER SETUP
-// ==========================================
-const swaggerOptions = {
-  definition: {
-    openapi: '3.0.0',
-    info: {
-      title: 'ACME Author/Paper API',
-      version: '1.0.0',
-      description: 'Express + SQLite version of the ACME REST API'
-    },
-    servers: [{ url: 'http://localhost:3000' }],
-    components: {
-      schemas: {
-        Author: {
-          type: 'object',
-          properties: {
-            authorId: { type: 'integer' },
-            name: { type: 'string' },
-            email: { type: 'string' }
-          }
-        },
-        Paper: {
-          type: 'object',
-          properties: {
-            paperId: { type: 'integer' },
-            entryId: { type: 'string' },
-            title: { type: 'string' },
-            abstract: { type: 'string' }
-          }
-        }
-      }
-    }
-  },
-  apis: [__filename]
 };
 
-const swaggerSpec = swaggerJSDoc(swaggerOptions);
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+let db = load();
+const save = () => fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
 
-// ==========================================
-//           AUTHOR ENDPOINTS
-// ==========================================
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const findAuthor = (id) => db.authors.find((a) => a.authorId === Number(id));
+const findPaper = (id) => db.papers.find((p) => p.paperId === Number(id));
+const papersOf = (authorId) =>
+  db.links.filter((l) => l.authorId === authorId).map((l) => findPaper(l.paperId)).filter(Boolean);
+const authorsOf = (paperId) =>
+  db.links.filter((l) => l.paperId === paperId).map((l) => findAuthor(l.authorId)).filter(Boolean);
 
-/**
- * @swagger
- * /authors:
- *   post:
- *     summary: Add a new Author
- *     tags: [Authors]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/Author'
- *     responses:
- *       201:
- *         description: Author created
- *       400:
- *         description: Author already registered
- */
-app.post('/authors', (req, res) => {
-  const { name, email } = req.body;
+const isBlank = (v) => typeof v !== 'string' || v.trim() === '';
 
-  db.get('SELECT * FROM authors WHERE email = ?', [email], (err, row) => {
-    if (err) return res.status(500).send(err.message);
-    if (row) {
-      return res.status(400).send(`Author with email ${email} is already registered.`);
-    }
+// Returns an error message, or null if the author payload is valid.
+const validateAuthor = ({ name, email, rank } = {}) => {
+  if (isBlank(name)) return 'Name is required.';
+  if (isBlank(email) || !EMAIL_REGEX.test(email.trim())) return `Invalid email: '${email ?? ''}'.`;
+  if (!AUTHOR_RANKS.includes(rank)) return `Invalid rank '${rank ?? ''}'. Allowed values: ${AUTHOR_RANKS.join(', ')}.`;
+  return null;
+};
 
-    db.run('INSERT INTO authors (name, email) VALUES (?, ?)', [name, email], function (err2) {
-      if (err2) return res.status(500).send(err2.message);
-      return res.status(201).end();
-    });
-  });
-});
+const validatePaper = ({ entryId, title } = {}) => {
+  if (!PAPER_ENTRY_IDS.includes(entryId)) return `Invalid entryId '${entryId ?? ''}'. Allowed values: ${PAPER_ENTRY_IDS.join(', ')}.`;
+  if (isBlank(title)) return 'Title is required.';
+  return null;
+};
 
-/**
- * @swagger
- * /authors/{authorId}:
- *   put:
- *     summary: Update an existing Author
- *     tags: [Authors]
- *     parameters:
- *       - in: path
- *         name: authorId
- *         required: true
- *         schema:
- *           type: integer
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/Author'
- *     responses:
- *       200:
- *         description: Author updated
- *       400:
- *         description: Bad request
- */
-app.put('/authors/:authorId', (req, res) => {
-  const authorId = parseInt(req.params.authorId, 10);
-  const { authorId: bodyId, name, email } = req.body;
-
-  if (bodyId !== authorId) {
-    return res.status(400).send('Path ID and Body ID do not match.');
+const addLink = (authorId, paperId) => {
+  if (!db.links.some((l) => l.authorId === authorId && l.paperId === paperId)) {
+    db.links.push({ authorId, paperId });
+    save();
   }
+};
+const removeLink = (authorId, paperId) => {
+  db.links = db.links.filter((l) => !(l.authorId === authorId && l.paperId === paperId));
+  save();
+};
 
-  db.get(
-    'SELECT * FROM authors WHERE email = ? AND authorId <> ?',
-    [email, authorId],
-    (err, existing) => {
-      if (err) return res.status(500).send(err.message);
-      if (existing) {
-        return res.status(400).send('Email already in use by another author.');
-      }
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-      db.run(
-        'UPDATE authors SET name = ?, email = ? WHERE authorId = ?',
-        [name, email, authorId],
-        function (err2) {
-          if (err2) return res.status(500).send(err2.message);
-          if (this.changes === 0) return res.status(400).send('Author ID not found.');
-          return res.status(200).end();
-        }
-      );
-    }
-  );
-});
+// --- Domain endpoints (must be registered before the /:id routes) ---------
+app.get('/papers/entry-ids', (req, res) => res.json(PAPER_ENTRY_IDS));
+app.get('/authors/ranks', (req, res) => res.json(AUTHOR_RANKS));
 
-/**
- * @swagger
- * /authors/{authorId}:
- *   delete:
- *     summary: Delete an Author
- *     tags: [Authors]
- *     parameters:
- *       - in: path
- *         name: authorId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       204:
- *         description: No content
- */
-app.delete('/authors/:authorId', (req, res) => {
-  const authorId = parseInt(req.params.authorId, 10);
-  db.run('DELETE FROM authors WHERE authorId = ?', [authorId], function (err) {
-    if (err) return res.status(500).send(err.message);
-    return res.status(204).end();
-  });
-});
+// --- Authors CRUD ----------------------------------------------------------
+app.get('/authors', (req, res) => res.json(db.authors));
 
-/**
- * @swagger
- * /authors/{authorId}:
- *   get:
- *     summary: Get an Author by ID (includes their papers)
- *     tags: [Authors]
- *     parameters:
- *       - in: path
- *         name: authorId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Author found
- *       404:
- *         description: Author not found
- */
 app.get('/authors/:authorId', (req, res) => {
-  const authorId = parseInt(req.params.authorId, 10);
-
-  db.get('SELECT * FROM authors WHERE authorId = ?', [authorId], (err, author) => {
-    if (err) return res.status(500).send(err.message);
-    if (!author) return res.status(404).end();
-
-    db.all(
-      `SELECT p.* FROM papers p
-       JOIN author_papers ap ON p.paperId = ap.paperId
-       WHERE ap.authorId = ?`,
-      [authorId],
-      (err2, papers) => {
-        if (err2) return res.status(500).send(err2.message);
-        return res.status(200).json({ ...author, papers });
-      }
-    );
-  });
+  const author = findAuthor(req.params.authorId);
+  if (!author) return res.status(404).json({ error: 'Author not found.' });
+  res.json({ ...author, papers: papersOf(author.authorId) });
 });
 
-/**
- * @swagger
- * /authors:
- *   get:
- *     summary: Get all Authors ordered by name
- *     tags: [Authors]
- *     responses:
- *       200:
- *         description: List of authors
- */
-app.get('/authors', (req, res) => {
-  db.all('SELECT * FROM authors ORDER BY name', [], (err, rows) => {
-    if (err) return res.status(500).send(err.message);
-    return res.status(200).json(rows);
-  });
+app.post('/authors', (req, res) => {
+  const err = validateAuthor(req.body);
+  if (err) return res.status(400).json({ error: err });
+  const { name, email, rank } = req.body;
+  const author = { authorId: db.nextAuthorId++, name: name.trim(), email: email.trim(), rank };
+  db.authors.push(author);
+  save();
+  res.status(201).json(author);
 });
 
-/**
- * @swagger
- * /authors/count:
- *   get:
- *     summary: Count Authors
- *     tags: [Authors]
- *     responses:
- *       200:
- *         description: Number of authors
- */
-app.get('/authors/count', (req, res) => {
-  db.get('SELECT COUNT(*) as count FROM authors', [], (err, row) => {
-    if (err) return res.status(500).send(err.message);
-    return res.status(200).json(row.count);
-  });
+app.put('/authors/:authorId', (req, res) => {
+  const author = findAuthor(req.params.authorId);
+  if (!author) return res.status(404).json({ error: 'Author not found.' });
+  const err = validateAuthor(req.body);
+  if (err) return res.status(400).json({ error: err });
+  const { name, email, rank } = req.body;
+  Object.assign(author, { name: name.trim(), email: email.trim(), rank });
+  save();
+  res.json(author);
 });
 
-/**
- * @swagger
- * /authors/is-registered:
- *   get:
- *     summary: Check if Author email is registered
- *     tags: [Authors]
- *     parameters:
- *       - in: query
- *         name: email
- *         schema:
- *           type: string
- *         required: true
- *     responses:
- *       200:
- *         description: Boolean result
- */
-app.get('/authors/is-registered', (req, res) => {
-  const { email } = req.query;
-  db.get('SELECT 1 FROM authors WHERE email = ?', [email], (err, row) => {
-    if (err) return res.status(500).send(err.message);
-    return res.status(200).json(!!row);
-  });
+app.delete('/authors/:authorId', (req, res) => {
+  const author = findAuthor(req.params.authorId);
+  if (!author) return res.status(404).json({ error: 'Author not found.' });
+  db.authors = db.authors.filter((a) => a !== author);
+  db.links = db.links.filter((l) => l.authorId !== author.authorId);
+  save();
+  res.json({ message: 'Author deleted.' });
 });
 
-// ==========================================
-//           PAPER ENDPOINTS
-// ==========================================
+// --- Papers CRUD -----------------------------------------------------------
+app.get('/papers', (req, res) => res.json(db.papers));
 
-/**
- * @swagger
- * /papers:
- *   post:
- *     summary: Add a new Paper
- *     tags: [Papers]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/Paper'
- *     responses:
- *       201:
- *         description: Paper created
- *       400:
- *         description: Paper already exists
- */
-app.post('/papers', (req, res) => {
-  const { entryId, title, abstract } = req.body;
-
-  db.get('SELECT * FROM papers WHERE entryId = ?', [entryId], (err, row) => {
-    if (err) return res.status(500).send(err.message);
-    if (row) {
-      return res.status(400).send(`Paper with entryId ${entryId} already exists.`);
-    }
-
-    db.run(
-      'INSERT INTO papers (entryId, title, abstract) VALUES (?, ?, ?)',
-      [entryId, title, abstract],
-      function (err2) {
-        if (err2) return res.status(500).send(err2.message);
-        return res.status(201).end();
-      }
-    );
-  });
-});
-
-/**
- * @swagger
- * /papers/{paperId}:
- *   put:
- *     summary: Update an existing Paper
- *     tags: [Papers]
- *     parameters:
- *       - in: path
- *         name: paperId
- *         required: true
- *         schema:
- *           type: integer
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/Paper'
- *     responses:
- *       200:
- *         description: Paper updated
- *       400:
- *         description: Bad request
- */
-app.put('/papers/:paperId', (req, res) => {
-  const paperId = parseInt(req.params.paperId, 10);
-  const { paperId: bodyId, entryId, title, abstract } = req.body;
-
-  if (bodyId !== paperId) {
-    return res.status(400).send('Path ID and Body ID do not match.');
-  }
-
-  db.get(
-    'SELECT * FROM papers WHERE entryId = ? AND paperId <> ?',
-    [entryId, paperId],
-    (err, existing) => {
-      if (err) return res.status(500).send(err.message);
-      if (existing) {
-        return res.status(400).send('EntryID already in use by another paper.');
-      }
-
-      db.run(
-        'UPDATE papers SET entryId = ?, title = ?, abstract = ? WHERE paperId = ?',
-        [entryId, title, abstract, paperId],
-        function (err2) {
-          if (err2) return res.status(500).send(err2.message);
-          if (this.changes === 0) return res.status(400).send('Paper ID not found.');
-          return res.status(200).end();
-        }
-      );
-    }
-  );
-});
-
-/**
- * @swagger
- * /papers/{paperId}:
- *   delete:
- *     summary: Delete a Paper
- *     tags: [Papers]
- *     parameters:
- *       - in: path
- *         name: paperId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       204:
- *         description: No content
- */
-app.delete('/papers/:paperId', (req, res) => {
-  const paperId = parseInt(req.params.paperId, 10);
-  db.run('DELETE FROM papers WHERE paperId = ?', [paperId], function (err) {
-    if (err) return res.status(500).send(err.message);
-    return res.status(204).end();
-  });
-});
-
-/**
- * @swagger
- * /papers/{paperId}:
- *   get:
- *     summary: Get a Paper by ID (includes its authors)
- *     tags: [Papers]
- *     parameters:
- *       - in: path
- *         name: paperId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Paper found
- *       404:
- *         description: Paper not found
- */
 app.get('/papers/:paperId', (req, res) => {
-  const paperId = parseInt(req.params.paperId, 10);
-
-  db.get('SELECT * FROM papers WHERE paperId = ?', [paperId], (err, paper) => {
-    if (err) return res.status(500).send(err.message);
-    if (!paper) return res.status(404).end();
-
-    db.all(
-      `SELECT a.* FROM authors a
-       JOIN author_papers ap ON a.authorId = ap.authorId
-       WHERE ap.paperId = ?`,
-      [paperId],
-      (err2, authors) => {
-        if (err2) return res.status(500).send(err2.message);
-        return res.status(200).json({ ...paper, authors });
-      }
-    );
-  });
+  const paper = findPaper(req.params.paperId);
+  if (!paper) return res.status(404).json({ error: 'Paper not found.' });
+  res.json({ ...paper, authors: authorsOf(paper.paperId) });
 });
 
-/**
- * @swagger
- * /papers:
- *   get:
- *     summary: Get all Papers ordered by title
- *     tags: [Papers]
- *     responses:
- *       200:
- *         description: List of papers
- */
-app.get('/papers', (req, res) => {
-  db.all('SELECT * FROM papers ORDER BY title', [], (err, rows) => {
-    if (err) return res.status(500).send(err.message);
-    return res.status(200).json(rows);
-  });
+app.post('/papers', (req, res) => {
+  const err = validatePaper(req.body);
+  if (err) return res.status(400).json({ error: err });
+  const { entryId, title, abstract = '' } = req.body;
+  const paper = { paperId: db.nextPaperId++, entryId, title: title.trim(), abstract };
+  db.papers.push(paper);
+  save();
+  res.status(201).json(paper);
 });
 
-/**
- * @swagger
- * /papers/count:
- *   get:
- *     summary: Count Papers
- *     tags: [Papers]
- *     responses:
- *       200:
- *         description: Number of papers
- */
-app.get('/papers/count', (req, res) => {
-  db.get('SELECT COUNT(*) as count FROM papers', [], (err, row) => {
-    if (err) return res.status(500).send(err.message);
-    return res.status(200).json(row.count);
-  });
+app.put('/papers/:paperId', (req, res) => {
+  const paper = findPaper(req.params.paperId);
+  if (!paper) return res.status(404).json({ error: 'Paper not found.' });
+  const err = validatePaper(req.body);
+  if (err) return res.status(400).json({ error: err });
+  const { entryId, title, abstract = '' } = req.body;
+  Object.assign(paper, { entryId, title: title.trim(), abstract });
+  save();
+  res.json(paper);
 });
 
-/**
- * @swagger
- * /papers/is-existing:
- *   get:
- *     summary: Check if Paper entryId exists
- *     tags: [Papers]
- *     parameters:
- *       - in: query
- *         name: entryId
- *         schema:
- *           type: string
- *         required: true
- *     responses:
- *       200:
- *         description: Boolean result
- */
-app.get('/papers/is-existing', (req, res) => {
-  const { entryId } = req.query;
-  db.get('SELECT 1 FROM papers WHERE entryId = ?', [entryId], (err, row) => {
-    if (err) return res.status(500).send(err.message);
-    return res.status(200).json(!!row);
-  });
+app.delete('/papers/:paperId', (req, res) => {
+  const paper = findPaper(req.params.paperId);
+  if (!paper) return res.status(404).json({ error: 'Paper not found.' });
+  db.papers = db.papers.filter((p) => p !== paper);
+  db.links = db.links.filter((l) => l.paperId !== paper.paperId);
+  save();
+  res.json({ message: 'Paper deleted.' });
 });
 
-/**
- * @swagger
- * /keywords:
- *   get:
- *     summary: Extract keywords from abstracts (stub)
- *     tags: [Papers]
- *     responses:
- *       200:
- *         description: DONE
- */
-app.get('/keywords', (req, res) => {
-  res.status(200).send('DONE!');
-});
+// --- Relationship management (from either side) ---------------------------
+const linkHandler = (action) => (req, res) => {
+  const author = findAuthor(req.params.authorId);
+  const paper = findPaper(req.params.paperId);
+  if (!author) return res.status(404).json({ error: 'Author not found.' });
+  if (!paper) return res.status(404).json({ error: 'Paper not found.' });
+  action(author.authorId, paper.paperId);
+  res.json({ message: action === addLink ? 'Linked.' : 'Unlinked.' });
+};
 
-/**
- * @swagger
- * /pdf/{paperId}:
- *   get:
- *     summary: Download Paper PDF (stub)
- *     tags: [Papers]
- *     parameters:
- *       - in: path
- *         name: paperId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Email sent
- */
-app.get('/pdf/:paperId', (req, res) => {
-  const paperId = parseInt(req.params.paperId, 10);
-  const pdfName = `paper-${paperId}.pdf`;
-  res.status(200).send(`Check your email for PDF ${pdfName}`);
-});
+app.put('/authors/:authorId/papers/:paperId', linkHandler(addLink));
+app.delete('/authors/:authorId/papers/:paperId', linkHandler(removeLink));
+app.put('/papers/:paperId/authors/:authorId', linkHandler(addLink));
+app.delete('/papers/:paperId/authors/:authorId', linkHandler(removeLink));
 
-// ==========================================
-//   LINK / UNLINK AUTHOR <-> PAPER
-// ==========================================
-
-/**
- * @swagger
- * /authors/{authorId}/papers/{paperId}:
- *   put:
- *     summary: Link Paper to Author
- *     tags: [Links]
- *     parameters:
- *       - in: path
- *         name: authorId
- *         required: true
- *         schema:
- *           type: integer
- *       - in: path
- *         name: paperId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       204:
- *         description: Linked
- */
-app.put('/authors/:authorId/papers/:paperId', (req, res) => {
-  const authorId = parseInt(req.params.authorId, 10);
-  const paperId = parseInt(req.params.paperId, 10);
-  db.run(
-    'INSERT OR IGNORE INTO author_papers (authorId, paperId) VALUES (?, ?)',
-    [authorId, paperId],
-    function (err) {
-      if (err) return res.status(500).send(err.message);
-      return res.status(204).end();
-    }
-  );
-});
-
-/**
- * @swagger
- * /authors/{authorId}/papers/{paperId}:
- *   delete:
- *     summary: Unlink Paper from Author
- *     tags: [Links]
- *     parameters:
- *       - in: path
- *         name: authorId
- *         required: true
- *         schema:
- *           type: integer
- *       - in: path
- *         name: paperId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       204:
- *         description: Unlinked
- */
-app.delete('/authors/:authorId/papers/:paperId', (req, res) => {
-  const authorId = parseInt(req.params.authorId, 10);
-  const paperId = parseInt(req.params.paperId, 10);
-  db.run(
-    'DELETE FROM author_papers WHERE authorId = ? AND paperId = ?',
-    [authorId, paperId],
-    function (err) {
-      if (err) return res.status(500).send(err.message);
-      return res.status(204).end();
-    }
-  );
-});
-
-/**
- * @swagger
- * /papers/{paperId}/authors/{authorId}:
- *   put:
- *     summary: Link Author to Paper
- *     tags: [Links]
- *     parameters:
- *       - in: path
- *         name: paperId
- *         required: true
- *         schema:
- *           type: integer
- *       - in: path
- *         name: authorId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       204:
- *         description: Linked
- */
-app.put('/papers/:paperId/authors/:authorId', (req, res) => {
-  const authorId = parseInt(req.params.authorId, 10);
-  const paperId = parseInt(req.params.paperId, 10);
-  db.run(
-    'INSERT OR IGNORE INTO author_papers (authorId, paperId) VALUES (?, ?)',
-    [authorId, paperId],
-    function (err) {
-      if (err) return res.status(500).send(err.message);
-      return res.status(204).end();
-    }
-  );
-});
-
-/**
- * @swagger
- * /papers/{paperId}/authors/{authorId}:
- *   delete:
- *     summary: Unlink Author from Paper
- *     tags: [Links]
- *     parameters:
- *       - in: path
- *         name: paperId
- *         required: true
- *         schema:
- *           type: integer
- *       - in: path
- *         name: authorId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       204:
- *         description: Unlinked
- */
-app.delete('/papers/:paperId/authors/:authorId', (req, res) => {
-  const authorId = parseInt(req.params.authorId, 10);
-  const paperId = parseInt(req.params.paperId, 10);
-  db.run(
-    'DELETE FROM author_papers WHERE authorId = ? AND paperId = ?',
-    [authorId, paperId],
-    function (err) {
-      if (err) return res.status(500).send(err.message);
-      return res.status(204).end();
-    }
-  );
-});
-
-// ==========================================
-//             START SERVER
-// ==========================================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`ACME API listening at http://localhost:${PORT}`);
-  console.log(`Swagger UI at http://localhost:${PORT}/api-docs`);
-});
+app.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
